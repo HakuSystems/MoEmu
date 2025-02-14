@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "iXk7c8p2vJc=",
+  "success": true,
+  "projectFilePath": "E:\\xxx\\Prototypes\\Emulator\\MoEmu\\MoEmu\\MoEmu.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Tiger\\.nuget\\packages\\microsoft.win32.systemevents\\9.0.2\\microsoft.win32.systemevents.9.0.2.nupkg.sha512",
+    "C:\\Users\\Tiger\\.nuget\\packages\\nefarius.vigem.client\\1.21.256\\nefarius.vigem.client.1.21.256.nupkg.sha512",
+    "C:\\Users\\Tiger\\.nuget\\packages\\system.drawing.common\\9.0.2\\system.drawing.common.9.0.2.nupkg.sha512"
+  ],
+  "logs": []
+}
