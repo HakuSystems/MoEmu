@@ -19,3 +19,4 @@ E:\xxx\Prototypes\Emulator\MoEmu\MoEmu\obj\Release\net9.0\refint\MoEmu.dll
 E:\xxx\Prototypes\Emulator\MoEmu\MoEmu\obj\Release\net9.0\MoEmu.pdb
 E:\xxx\Prototypes\Emulator\MoEmu\MoEmu\obj\Release\net9.0\MoEmu.genruntimeconfig.cache
 E:\xxx\Prototypes\Emulator\MoEmu\MoEmu\obj\Release\net9.0\ref\MoEmu.dll
+E:\xxx\Prototypes\Emulator\MoEmu\MoEmu\obj\Release\net9.0\MoEmu.sourcelink.json

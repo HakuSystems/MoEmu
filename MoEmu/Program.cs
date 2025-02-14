@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
-using System.Threading;
-using System.Threading.Tasks;
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
@@ -22,6 +18,9 @@ namespace MoEmu
 
         static async Task Main(string[] args)
         {
+            // Set the console title.
+            Console.Title = "P to EXIT";
+
             // Force the application to run with administrator privileges.
             if (!IsAdministrator())
             {
@@ -49,6 +48,7 @@ namespace MoEmu
                 Console.WriteLine("ERROR: Failed to create interception context.");
                 return;
             }
+
             Console.WriteLine("Interception context established successfully.");
 
             // Set filters for keyboard and mouse.
@@ -62,6 +62,8 @@ namespace MoEmu
                 InterceptorConstants.INTERCEPTION_FILTER_MOUSE_MOVE
                     | InterceptorConstants.INTERCEPTION_FILTER_MOUSE_LEFT_BUTTON_DOWN
                     | InterceptorConstants.INTERCEPTION_FILTER_MOUSE_LEFT_BUTTON_UP
+                    | InterceptorConstants.INTERCEPTION_FILTER_MOUSE_RIGHT_BUTTON_DOWN
+                    | InterceptorConstants.INTERCEPTION_FILTER_MOUSE_RIGHT_BUTTON_UP
             );
 
             // Initialize input processing with our asynchronous loops.
@@ -118,6 +120,7 @@ namespace MoEmu
             {
                 Console.WriteLine("Failed to relaunch as administrator: " + ex.Message);
             }
+
             Environment.Exit(0);
         }
 
@@ -158,9 +161,11 @@ namespace MoEmu
         public const ushort INTERCEPTION_FILTER_KEY_UP = 0x02;
         public const ushort INTERCEPTION_FILTER_MOUSE_MOVE = 0x01;
 
-        // Assumed flags for mouse button events:
+        // Assumed flags for mouse button events.
         public const ushort INTERCEPTION_FILTER_MOUSE_LEFT_BUTTON_DOWN = 0x02;
         public const ushort INTERCEPTION_FILTER_MOUSE_LEFT_BUTTON_UP = 0x04;
+        public const ushort INTERCEPTION_FILTER_MOUSE_RIGHT_BUTTON_DOWN = 0x08;
+        public const ushort INTERCEPTION_FILTER_MOUSE_RIGHT_BUTTON_UP = 0x10;
     }
 
     // Enumeration for device type in the interception context.
@@ -173,13 +178,13 @@ namespace MoEmu
     // Disposable wrapper for the unmanaged interception context.
     public class InterceptorContext : IDisposable
     {
-        public IntPtr Context { get; private set; }
-        public bool IsValid => Context != IntPtr.Zero;
-
         public InterceptorContext()
         {
             Context = interception_create_context();
         }
+
+        public IntPtr Context { get; private set; }
+        public bool IsValid => Context != IntPtr.Zero;
 
         public void Dispose()
         {
@@ -188,6 +193,31 @@ namespace MoEmu
                 interception_destroy_context(Context);
                 Context = IntPtr.Zero;
             }
+        }
+
+        public void SetFilter(InterceptionType type, ushort filter)
+        {
+            if (type == InterceptionType.Keyboard)
+                interception_set_filter(Context, IsKeyboard, filter);
+            else if (type == InterceptionType.Mouse)
+                interception_set_filter(Context, IsMouse, filter);
+        }
+
+        public int WaitForDevice()
+        {
+            return interception_wait(Context);
+        }
+
+        public int ReceiveKeyboardStroke(ref InterceptionStroke stroke)
+        {
+            var device = WaitForDevice();
+            return interception_receive(Context, device, ref stroke, 1);
+        }
+
+        public int ReceiveMouseStroke(ref InterceptionMouseStroke stroke)
+        {
+            var device = WaitForDevice();
+            return interception_receive(Context, device, ref stroke, 1);
         }
 
         #region P/Invoke Definitions
@@ -239,28 +269,6 @@ namespace MoEmu
         public static int IsMouse(int device) => (device >= 11 && device <= 20) ? 1 : 0;
 
         #endregion
-
-        public void SetFilter(InterceptionType type, ushort filter)
-        {
-            if (type == InterceptionType.Keyboard)
-                interception_set_filter(Context, IsKeyboard, filter);
-            else if (type == InterceptionType.Mouse)
-                interception_set_filter(Context, IsMouse, filter);
-        }
-
-        public int WaitForDevice() => interception_wait(Context);
-
-        public int ReceiveKeyboardStroke(ref InterceptionStroke stroke)
-        {
-            int device = WaitForDevice();
-            return interception_receive(Context, device, ref stroke, 1);
-        }
-
-        public int ReceiveMouseStroke(ref InterceptionMouseStroke stroke)
-        {
-            int device = WaitForDevice();
-            return interception_receive(Context, device, ref stroke, 1);
-        }
     }
 
     // Struct definitions for keyboard and mouse strokes.
@@ -283,23 +291,19 @@ namespace MoEmu
         public uint information;
     }
 
-    // Processes keyboard and mouse input asynchronously.
+    // Processes keyboard and mouse input asynchronously and updates the virtual gamepad.
     public class InputProcessor
     {
-        private readonly InterceptorContext _interceptor;
-        private readonly IXbox360Controller _gamepad;
-
-        // Internal state variables.
-        // Controller is active by default.
-        private volatile bool _paused = false;
-        private readonly object _activeKeysLock = new object();
-        private readonly HashSet<int> _activeKeys = new HashSet<int>();
-        private double _lastMouseMoveTime = DateTimeOffset.Now.ToUnixTimeMilliseconds();
         private const double Sensitivity = 1.05;
+        private const double AimSensitivityFactor = 0.5; // Reduced sensitivity when aiming.
 
         // Scan codes for special keys.
         private const int KEY_INSERT = 82;
         private const int KEY_PANIC = 25;
+        private readonly HashSet<int> _activeKeys = new();
+        private readonly object _activeKeysLock = new();
+        private readonly IXbox360Controller _gamepad;
+        private readonly InterceptorContext _interceptor;
 
         // Mapping from keyboard scan codes to Xbox360Controller buttons (QWERTZ optimized).
         private readonly Dictionary<int, Xbox360Button> _keyToButton = new Dictionary<
@@ -344,6 +348,13 @@ namespace MoEmu
             ,
         };
 
+        // Flag for whether we are in aiming mode.
+        private bool _isAiming;
+        private double _lastMouseMoveTime = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+
+        // Internal state variables.
+        private volatile bool _paused; // Controller active by default.
+
         public InputProcessor(InterceptorContext interceptor, IXbox360Controller gamepad)
         {
             _interceptor = interceptor;
@@ -378,6 +389,7 @@ namespace MoEmu
                 {
                     Console.WriteLine($"Keyboard processing error: {ex.Message}");
                 }
+
                 await Task.Delay(5, token);
             }
         }
@@ -393,7 +405,8 @@ namespace MoEmu
                     {
                         InterceptionMouseStroke mouseStroke = new InterceptionMouseStroke();
                         _interceptor.ReceiveMouseStroke(ref mouseStroke);
-                        // Process mouse button events for shooting.
+
+                        // Process left mouse button events for shooting.
                         if (
                             (
                                 mouseStroke.flags
@@ -416,6 +429,41 @@ namespace MoEmu
                             _gamepad.SetSliderValue(Xbox360Slider.RightTrigger, 0);
                             _gamepad.SubmitReport();
                         }
+                        // Process right mouse button events for aiming.
+                        else if (
+                            (
+                                mouseStroke.flags
+                                & InterceptorConstants.INTERCEPTION_FILTER_MOUSE_RIGHT_BUTTON_DOWN
+                            ) != 0
+                        )
+                        {
+                            if (!_isAiming)
+                            {
+                                Console.WriteLine(
+                                    "AIM: Right mouse button pressed (aim mode activated)."
+                                );
+                                _isAiming = true;
+                                _gamepad.SetSliderValue(Xbox360Slider.LeftTrigger, 255);
+                                _gamepad.SubmitReport();
+                            }
+                        }
+                        else if (
+                            (
+                                mouseStroke.flags
+                                & InterceptorConstants.INTERCEPTION_FILTER_MOUSE_RIGHT_BUTTON_UP
+                            ) != 0
+                        )
+                        {
+                            if (_isAiming)
+                            {
+                                Console.WriteLine(
+                                    "AIM: Right mouse button released (aim mode deactivated)."
+                                );
+                                _isAiming = false;
+                                _gamepad.SetSliderValue(Xbox360Slider.LeftTrigger, 0);
+                                _gamepad.SubmitReport();
+                            }
+                        }
                         // Process mouse movement.
                         else if (
                             (
@@ -435,6 +483,7 @@ namespace MoEmu
                 {
                     Console.WriteLine($"Mouse processing error: {ex.Message}");
                 }
+
                 await Task.Delay(5, token);
             }
         }
@@ -450,6 +499,7 @@ namespace MoEmu
                     _gamepad.SetAxisValue(Xbox360Axis.RightThumbY, 0);
                     _gamepad.SubmitReport();
                 }
+
                 await Task.Delay(50, token);
             }
         }
@@ -458,7 +508,7 @@ namespace MoEmu
         {
             string keyState = (stroke.state == 0) ? "PRESSED" : "RELEASED";
 
-            // Still allow pausing if needed (optional).
+            // Optional pause toggle.
             if (stroke.code == KEY_INSERT && stroke.state == 0)
             {
                 _paused = !_paused;
@@ -470,6 +520,7 @@ namespace MoEmu
                     _lastMouseMoveTime = DateTimeOffset.Now.ToUnixTimeMilliseconds() - 100;
                     Console.WriteLine("Mouse inputs temporarily disabled.");
                 }
+
                 return;
             }
 
@@ -510,6 +561,7 @@ namespace MoEmu
                         Console.WriteLine($"MOVEMENT KEY: {stroke.code} RELEASED.");
                     }
                 }
+
                 UpdateJoystick();
             }
         }
@@ -521,9 +573,11 @@ namespace MoEmu
 
             Console.WriteLine($"MOUSE MOVEMENT: X: {mouseStroke.x}, Y: {mouseStroke.y}");
 
-            // Adjust sensitivity and calculate right thumbstick input.
-            double rjoystickX = (mouseStroke.x / 10.0) * Sensitivity;
-            double rjoystickY = (mouseStroke.y / 10.0) * Sensitivity;
+            // Use reduced sensitivity if aiming.
+            var effectiveSensitivity = _isAiming ? Sensitivity * AimSensitivityFactor : Sensitivity;
+
+            var rjoystickX = mouseStroke.x / 10.0 * effectiveSensitivity;
+            var rjoystickY = mouseStroke.y / 10.0 * effectiveSensitivity;
             rjoystickX = Math.Max(Math.Min(rjoystickX, 1.0), -1.0);
             rjoystickY = Math.Max(Math.Min(rjoystickY, 1.0), -1.0);
 
@@ -549,7 +603,7 @@ namespace MoEmu
                 foreach (var key in _activeKeys)
                 {
                     var movement = _movementKeys[key];
-                    // For Y axis, we no longer invert the value.
+                    // Use the mapping directly (W/S affect Y, A/D affect X).
                     if (movement.Item1 == 0)
                         y += movement.Item2;
                     else
