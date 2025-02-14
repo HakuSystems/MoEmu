@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MoEmu")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+906c6d4d61695e528d269186ca80e6d08e1b95ce")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2b23f150f05182daa3002cf915463e16d378b3f2")]
 [assembly: System.Reflection.AssemblyProductAttribute("MoEmu")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MoEmu")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
